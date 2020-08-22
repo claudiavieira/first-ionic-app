@@ -14,37 +14,55 @@ export class PhotoService {
 
   constructor(platform: Platform) {
     this.platform = platform;
+   }
+
+  public async loadSaved() {
+    // Retrieve cached photo array data
+    const photos = await Storage.get({ key: this.PHOTO_STORAGE });
+    this.photos = JSON.parse(photos.value) || [];
+
+    // If running on the web...
+    if (!this.platform.is('hybrid')) {
+      // Display the photo by reading into base64 format
+      for (let photo of this.photos) {
+        // Read each saved photo's data from the Filesystem
+        const readFile = await Filesystem.readFile({
+            path: photo.filepath,
+            directory: FilesystemDirectory.Data
+        });
+      
+        // Web platform only: Save the photo into the base64 field
+        photo.webviewPath = `data:image/jpeg;base64,${readFile.data}`;
+      }
+    }
   }
 
+  /* Use the device camera to take a photo:
+  // https://capacitor.ionicframework.com/docs/apis/camera
+  
+  // Store the photo data into permanent file storage:
+  // https://capacitor.ionicframework.com/docs/apis/filesystem
+  
+  // Store a reference to all photo filepaths using Storage API:
+  // https://capacitor.ionicframework.com/docs/apis/storage
+  */
   public async addNewToGallery() {
     // Take a photo
-    const capturedPhoto = await Camera.getPhoto({ // Camera.getPhoto: abrirá a câmera do dispositivo e nos permitirá tirar fotos.
+    const capturedPhoto = await Camera.getPhoto({
       resultType: CameraResultType.Uri, // file-based data; provides best performance
       source: CameraSource.Camera, // automatically take a new photo with the camera
       quality: 100 // highest quality (0 to 100)
     });
-
-    // Save the picture and add it to photo collection
+    
     const savedImageFile = await this.savePicture(capturedPhoto);
+
+    // Add new photo to Photos array
     this.photos.unshift(savedImageFile);
 
-    this.photos.unshift({
-      filepath: "soon...",
-      webviewPath: capturedPhoto.webPath
-    });
-
+    // Cache all photo data for future retrieval
     Storage.set({
       key: this.PHOTO_STORAGE,
-      value: this.platform.is('hybrid')
-              ? JSON.stringify(this.photos)
-              : JSON.stringify(this.photos.map(p => {
-                // Don't save the base64 representation of the photo data,
-                // since it's already saved on the Filesystem
-                const photoCopy = { ...p };
-                delete photoCopy.base64;
-    
-                return photoCopy;
-            }))
+      value: JSON.stringify(this.photos)
     });
   }
 
@@ -70,7 +88,7 @@ export class PhotoService {
       };
     }
     else {
-      // Use webPath to display the new image instead of base64 since it's
+      // Use webPath to display the new image instead of base64 since it's 
       // already loaded into memory
       return {
         filepath: fileName,
@@ -79,6 +97,7 @@ export class PhotoService {
     }
   }
 
+  // Read camera photo into base64 format based on the platform the app is running on
   private async readAsBase64(cameraPhoto: CameraPhoto) {
     // "hybrid" will detect Cordova or Capacitor
     if (this.platform.is('hybrid')) {
@@ -86,18 +105,37 @@ export class PhotoService {
       const file = await Filesystem.readFile({
         path: cameraPhoto.path
       });
-  
+
       return file.data;
     }
     else {
       // Fetch the photo, read as a blob, then convert to base64 format
-      const response = await fetch(cameraPhoto.webPath);
+      const response = await fetch(cameraPhoto.webPath!);
       const blob = await response.blob();
-  
-      return await this.convertBlobToBase64(blob) as string;
+
+      return await this.convertBlobToBase64(blob) as string;  
     }
   }
-  
+
+  // Delete picture by removing it from reference data and the filesystem
+  public async deletePicture(photo: Photo, position: number) {
+    // Remove this photo from the Photos reference data array
+    this.photos.splice(position, 1);
+
+    // Update photos array cache by overwriting the existing photo array
+    Storage.set({
+      key: this.PHOTO_STORAGE,
+      value: JSON.stringify(this.photos)
+    });
+
+    // delete photo file from filesystem
+    const filename = photo.filepath.substr(photo.filepath.lastIndexOf('/') + 1);
+    await Filesystem.deleteFile({
+      path: filename,
+      directory: FilesystemDirectory.Data
+    });
+  }
+
   convertBlobToBase64 = (blob: Blob) => new Promise((resolve, reject) => {
     const reader = new FileReader;
     reader.onerror = reject;
@@ -106,33 +144,9 @@ export class PhotoService {
     };
     reader.readAsDataURL(blob);
   });
-
-  public async loadSaved() {
-    // Retrieve cached photo array data
-    const photos = await Storage.get({ key: this.PHOTO_STORAGE });
-    this.photos = JSON.parse(photos.value) || [];
-  
-    // Easiest way to detect when running on the web:
-    // “when the platform is NOT hybrid, do this”
-    if (!this.platform.is('hybrid')) {
-      // Display the photo by reading into base64 format
-      for (let photo of this.photos) {
-        // Read each saved photo's data from the Filesystem
-        const readFile = await Filesystem.readFile({
-            path: photo.filepath,
-            directory: FilesystemDirectory.Data
-        });
-  
-        // Web platform only: Save the photo into the base64 field
-        photo.base64 = `data:image/jpeg;base64,${readFile.data}`;
-      }
-    }
-  }
-
-interface Photo { // conterão metadados da foto 
-  filepath: string;
-  webviewPath: string;
-  base64?: string;
 }
 
-
+interface Photo {
+  filepath: string;
+  webviewPath: string;
+}
